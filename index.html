@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#0d1117;
@@ -155,6 +156,21 @@
     padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;
   }
   .pager button:disabled{opacity:.4;cursor:not-allowed;}
+
+  /* ===== Remaining Shelf Life section ===== */
+  #shelfLife{margin-top:16px;}
+  .sl-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px;}
+  .sl-card{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:14px 14px 12px;position:relative;overflow:hidden;cursor:pointer;text-align:left;color:var(--text);font-family:'Inter',sans-serif;}
+  .sl-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--k);}
+  .sl-card.on{border-color:var(--k);box-shadow:0 0 0 1px var(--k) inset;}
+  .sl-card .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;}
+  .sl-card .val{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:600;color:var(--k);}
+  .sl-card .u{font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:4px;}
+  .sl-card .r{font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
+  .sl-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#0d1420;margin-bottom:16px;}
+  .sl-bar div{height:100%;}
+  .sl-tag{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;letter-spacing:.05em;text-transform:uppercase;border:1px solid var(--k);color:var(--k);background:#ffffff08;}
+  #slErr{color:var(--short);font-family:'IBM Plex Mono',monospace;font-size:12px;margin-bottom:12px;}
 </style>
 </head>
 <body>
@@ -169,6 +185,7 @@
     <div class="refresh-box">
       <div class="scan-row">
         <a id="scanLink" href="Form.html" target="_blank" rel="noopener">📷 Open Scanner</a>
+        <a href="#shelfLife" style="background:#ffb648;">⏳ Shelf Life</a>
         <button class="copy" onclick="copyScanLink(this)">Copy link</button>
       </div>
       <button id="refreshBtn" onclick="loadData()">↻ Refresh now</button>
@@ -304,6 +321,39 @@
         <button onclick="changePage(-1)" id="prevBtn">‹ Prev</button>
         <button onclick="changePage(1)" id="nextBtn">Next ›</button>
       </div>
+    </div>
+  </div>
+
+
+  <div class="panel" id="shelfLife">
+    <div class="panel-head">
+      <div>
+        <h2>Remaining Shelf Life</h2>
+        <div class="desc">Expiry − today (MM/YYYY expiry = us mahine ke last din tak) · Audit Entries · <span id="slUpd">—</span></div>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="dl-btn" onclick="slDownload('csv')">⬇ CSV</button>
+        <button class="dl-btn" onclick="slDownload('xlsx')">⬇ Excel</button>
+      </div>
+    </div>
+    <div id="slErr"></div>
+    <div class="sl-cards" id="slCards"></div>
+    <div class="sl-bar" id="slBar"></div>
+    <div class="table-controls">
+      <input type="text" id="slQ" placeholder="Search EAN / Shelf / Auditor / Bin ID…" oninput="slReset(false)">
+      <select id="slAud" onchange="slReset(false)"><option value="">All auditors</option></select>
+      <button class="dl-btn" onclick="slReset(true)">Clear filters</button>
+      <span id="slCnt" style="color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:12px;"></span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead id="slTh"></thead>
+        <tbody id="slTb"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span id="slInfo"></span>
+      <button id="slMoreBtn" style="display:none" onclick="slShowMore()">Show more</button>
     </div>
   </div>
 
@@ -908,6 +958,195 @@ function copyScanLink(b){
   (navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>{b.textContent='Copied ✓';},()=>{prompt('Scanner link:',u);});
   setTimeout(()=>{b.textContent='Copy link';},1500);
 }
+</script>
+
+<script>
+(function(){
+  const SL_SHEET_ID = '1JqfoLm8o5mJ3-OQIlj1gqk75vHK5Q9952N0Ejw8BouI';
+  const SL_TAB = 'Audit Entries';
+  // Expiry MM/YYYY = us mahine ke LAST din tak valid (sheet ke "Remaining Shelf Life (Days)" column jaisa hi)
+  const BUCKETS = [
+    { k:'exp', label:'Expired',           sub:'Expiry nikal chuki', color:'#c2415a', test:d => d < 0 },
+    { k:'30',  label:'Less than 30 days', sub:'0 – 29 days',        color:'#ff5c7a', test:d => d >= 0 && d < 30 },
+    { k:'60',  label:'Less than 60 days', sub:'30 – 59 days',       color:'#ffb648', test:d => d >= 30 && d < 60 },
+    { k:'90',  label:'Less than 90 days', sub:'60 – 89 days',       color:'#e8d44d', test:d => d >= 60 && d < 90 },
+    { k:'90p', label:'Above 90 days',     sub:'90+ days',           color:'#2ecc8f', test:d => d >= 90 }
+  ];
+  const COLS = [
+    ['shelf','Shelf'],['ean','EAN'],['mrp','MRP','num'],['qty','Total QTY','num'],['mfgT','MFG'],['expT','Expiry'],
+    ['slife','Shelf Life (Months)','num'],['days','Remaining (Days)','num'],['bucketL','Status'],['auditor','Auditor'],['binId','Bin ID'],['tsT','Scanned At']
+  ];
+  const HEAD = ['Shelf','EAN','MRP','Total QTY','MFG (MM/YYYY)','Expiry (MM/YYYY)','Shelf Life (Months)','Remaining Shelf Life (Days)','Status','Auditor','Bin ID','Scanned At'];
+  let ROWS = [], FB = 'all', SK = 'days', SD = 1, LIM = 300, NOEXP = 0;
+
+  const g = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const nf = n => Number(n).toLocaleString('en-IN');
+  const cellVal = c => c ? (c.v != null ? c.v : null) : null;
+
+  function parseMonthYear(c){
+    if (!c) return null;
+    const v = c.v;
+    if (typeof v === 'string') {
+      let m = /^Date\((\d+),(\d+),(\d+)/.exec(v);
+      if (m) return { y:+m[1], m:+m[2] + 1 };
+      m = /^(\d{1,2})\/(\d{4})$/.exec(v.trim());
+      if (m) return { y:+m[2], m:+m[1] };
+    }
+    if (typeof c.f === 'string') {
+      const m = /^(\d{1,2})\/(\d{4})$/.exec(c.f.trim());
+      if (m) return { y:+m[2], m:+m[1] };
+    }
+    return null;
+  }
+  const mm = o => o ? String(o.m).padStart(2,'0') + '/' + o.y : '';
+  function parseTs(c){
+    if (!c) return '';
+    if (c.f) return c.f;
+    const m = /^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?/.exec(String(c.v || ''));
+    if (!m) return String(c.v || '');
+    const p = x => String(x || 0).padStart(2,'0');
+    return p(m[3]) + '-' + p(+m[2] + 1) + '-' + m[1] + (m[4] != null ? ' ' + p(m[4]) + ':' + p(m[5]) + ':' + p(m[6]) : '');
+  }
+  const findCol = (cols, test, fb) => { const i = cols.findIndex(c => test((c.label || '').toLowerCase().trim())); return i >= 0 ? i : fb; };
+
+  async function slLoad(){
+    g('slErr').textContent = '';
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${SL_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(SL_TAB)}&_=${Date.now()}`;
+      const txt = await (await fetch(url, { cache:'no-store' })).text();
+      const j = JSON.parse(txt.substring(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+      if (j.status === 'error') throw new Error((j.errors && j.errors[0] && j.errors[0].detailed_message) || 'Sheet read error');
+      const cols = j.table.cols;
+      const ix = {
+        ts: findCol(cols, l => l === 'timestamp' || l === 'date', 0),
+        auditor: findCol(cols, l => l === 'auditor', 1),
+        shelf: findCol(cols, l => l === 'shelf', 2),
+        ean: findCol(cols, l => l === 'ean', 3),
+        mrp: findCol(cols, l => l === 'mrp', 4),
+        qty: findCol(cols, l => l === 'total qty', 8),
+        binId: findCol(cols, l => l === 'bin id', 9),
+        mfg: findCol(cols, l => l.includes('mfg'), 10),
+        exp: findCol(cols, l => l.includes('expiry') && !l.includes('remaining'), 11),
+        slife: findCol(cols, l => l.includes('shelf life') && !l.includes('remaining'), 12)
+      };
+      const now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      ROWS = []; NOEXP = 0;
+      (j.table.rows || []).forEach(r => {
+        const c = r.c || [];
+        const ean = cellVal(c[ix.ean]);
+        if (ean == null || String(ean).toLowerCase() === 'ean') return;
+        const exp = parseMonthYear(c[ix.exp]), mfg = parseMonthYear(c[ix.mfg]);
+        let days = null, b = null;
+        if (exp) { days = Math.round((new Date(exp.y, exp.m, 0) - today) / 86400000); b = BUCKETS.find(x => x.test(days)); }
+        else NOEXP++;
+        const sl = cellVal(c[ix.slife]);
+        ROWS.push({
+          shelf: cellVal(c[ix.shelf]) || '', ean: String(ean), mrp: Number(cellVal(c[ix.mrp])) || 0,
+          qty: Number(cellVal(c[ix.qty])) || 0, mfgT: mm(mfg), expT: mm(exp),
+          slife: (sl != null && sl !== '') ? Number(sl) : (mfg && exp ? (exp.y - mfg.y) * 12 + (exp.m - mfg.m) : ''),
+          days, bucket: b ? b.k : '', bucketL: b ? b.label : 'No expiry date',
+          auditor: cellVal(c[ix.auditor]) || '', binId: cellVal(c[ix.binId]) || '', tsT: parseTs(c[ix.ts])
+        });
+      });
+      const keep = g('slAud').value;
+      const auds = [...new Set(ROWS.map(r => r.auditor).filter(Boolean))].sort();
+      g('slAud').innerHTML = '<option value="">All auditors</option>' + auds.map(a => `<option ${a === keep ? 'selected' : ''}>${esc(a)}</option>`).join('');
+      g('slUpd').textContent = 'updated ' + new Date().toLocaleTimeString('en-IN');
+    } catch (e) {
+      g('slErr').textContent = 'Shelf life data load nahi hua: ' + e.message;
+    }
+    draw();
+  }
+
+  const matchQ = r => { const q = g('slQ').value.trim().toLowerCase(); return !q || (r.ean + ' ' + r.shelf + ' ' + r.auditor + ' ' + r.binId).toLowerCase().includes(q); };
+  const matchA = r => { const a = g('slAud').value; return !a || r.auditor === a; };
+  const filtered = () => ROWS.filter(r => (FB === 'all' || r.bucket === FB) && matchA(r) && matchQ(r));
+
+  function draw(){
+    const base = ROWS.filter(r => matchA(r) && matchQ(r));
+    const withExp = base.filter(r => r.bucket);
+    const totQ = withExp.reduce((s, r) => s + r.qty, 0) || 1;
+    g('slCards').innerHTML = BUCKETS.map(b => {
+      const rs = base.filter(r => r.bucket === b.k), qt = rs.reduce((s, r) => s + r.qty, 0);
+      return `<button class="sl-card ${FB === b.k ? 'on' : ''}" style="--k:${b.color}" onclick="slSetB('${b.k}')">
+        <div class="lbl">${b.label}</div><div class="val">${nf(qt)}</div>
+        <div class="u">units · ${nf(rs.length)} EAN lines</div><div class="r">${b.sub}</div></button>`;
+    }).join('');
+    g('slBar').innerHTML = BUCKETS.map(b => {
+      const qt = withExp.filter(r => r.bucket === b.k).reduce((s, r) => s + r.qty, 0);
+      return `<div style="width:${qt / totQ * 100}%;background:${b.color}" title="${b.label}: ${nf(qt)}"></div>`;
+    }).join('');
+
+    const rs = filtered();
+    rs.sort((x, y) => {
+      const A = x[SK], B = y[SK];
+      const an = A === null || A === '', bn = B === null || B === '';
+      if (an && bn) return 0; if (an) return 1; if (bn) return -1;
+      if (typeof A === 'number' && typeof B === 'number') return (A - B) * SD;
+      return String(A).localeCompare(String(B), undefined, { numeric:true }) * SD;
+    });
+    g('slTh').innerHTML = '<tr>' + COLS.map(c => `<th class="sortable ${c[2] || ''}" onclick="slSort('${c[0]}')">${c[1]}<span class="arrow">${SK === c[0] ? (SD === 1 ? '▲' : '▼') : '↕'}</span></th>`).join('') + '</tr>';
+    const colorOf = k => (BUCKETS.find(b => b.k === k) || {}).color || '#8996ab';
+    g('slTb').innerHTML = rs.slice(0, LIM).map(r => '<tr>' + COLS.map(c => {
+      const v = r[c[0]];
+      if (c[0] === 'bucketL') return `<td><span class="sl-tag" style="--k:${colorOf(r.bucket)}">${esc(v)}</span></td>`;
+      if (c[0] === 'days') return `<td class="num" style="color:${colorOf(r.bucket)};font-weight:600">${v == null ? '—' : v}</td>`;
+      return `<td class="${c[2] || ''}">${esc(c[2] === 'num' && v !== '' ? nf(v) : v)}</td>`;
+    }).join('') + '</tr>').join('') || `<tr><td colspan="${COLS.length}" style="text-align:center;color:var(--muted);padding:22px">Koi data nahi</td></tr>`;
+    g('slCnt').textContent = `${nf(rs.length)} rows · ${nf(rs.reduce((s, r) => s + r.qty, 0))} units`;
+    g('slInfo').textContent = `Showing ${nf(Math.min(LIM, rs.length))} of ${nf(rs.length)}` + (NOEXP ? ` · ${NOEXP} rows me expiry date nahi hai` : '');
+    g('slMoreBtn').style.display = rs.length > LIM ? '' : 'none';
+  }
+
+  window.slSetB = k => { FB = (FB === k) ? 'all' : k; LIM = 300; draw(); };
+  window.slSort = k => { if (SK === k) SD = -SD; else { SK = k; SD = 1; } draw(); };
+  window.slShowMore = () => { LIM += 300; draw(); };
+  window.slReset = clear => {
+    if (clear) { g('slQ').value = ''; g('slAud').value = ''; FB = 'all'; }
+    LIM = 300; draw();
+  };
+
+  // ---------- download (current filtered view) ----------
+  function dlRows(){
+    return filtered().sort((x, y) => (x.days == null) - (y.days == null) || (x.days - y.days)).map(r =>
+      [r.shelf, r.ean, r.mrp, r.qty, r.mfgT, r.expT, r.slife, r.days == null ? '' : r.days, r.bucketL, r.auditor, r.binId, r.tsT]);
+  }
+  function fname(ext){
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return `Remaining_Shelf_Life_${FB === 'all' ? 'All' : FB}_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.${ext}`;
+  }
+  function save(blob, name){
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  window.slDownload = type => {
+    const rows = dlRows();
+    if (!rows.length) return alert('Download ke liye data nahi hai.');
+    if (type === 'xlsx') {
+      if (typeof XLSX === 'undefined') return alert('Excel library load nahi hui — CSV download use karo.');
+      const ws = XLSX.utils.aoa_to_sheet([HEAD].concat(rows));
+      ws['!cols'] = HEAD.map((h, i) => ({ wch: i === 1 ? 16 : Math.max(10, h.length + 2) }));
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Shelf Life');
+      XLSX.writeFile(wb, fname('xlsx'));
+      return;
+    }
+    const cell = (v, i) => {
+      const s = String(v == null ? '' : v);
+      if (i === 1) return '="' + s.replace(/"/g, '') + '"';          // EAN Excel me sci-notation na bane
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [HEAD.join(',')].concat(rows.map(r => r.map(cell).join(','))).join('\r\n');
+    save(new Blob(['\ufeff' + csv], { type:'text/csv;charset=utf-8' }), fname('csv'));
+  };
+
+  // Page ka "Refresh now" / auto-refresh dono ke saath shelf life bhi refresh ho
+  if (typeof window.loadData === 'function') {
+    const orig = window.loadData;
+    window.loadData = function(){ slLoad(); return orig.apply(this, arguments); };
+  }
+  slLoad();
+})();
 </script>
 </body>
 </html>
