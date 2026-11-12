@@ -58,14 +58,14 @@
 <div class="top"><h1>📦 Audit Bin Scanner</h1><div class="who" id="who"></div></div>
 <div id="net"></div>
 <div id="app"></div>
-<div class="sum" style="text-align:center;margin-top:16px">Form v2.2 · server mfg-v2</div>
+<div class="sum" style="text-align:center;margin-top:16px">Form v2.5 · server mfg-v4</div>
 
 <script>
 // ====== CONFIG: Apps Script Web App URL yahan paste karo ======
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbziwBWUGBTlajORuGSqyVouJaKH5cYzzqZn_ldsWTXC_Q-m8eyEwoEcIiv4cxNQFymg3A/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxpv5Yefd7hHOLroV3Z0ddJAb-Bur1seEm0U2lNA7OTB8emBHjLjOLtc9EkaRDJ86IoFw/exec';
 // MFG + Expiry dono compulsory? (true = bharna zaroori, false = optional but ek bhara to dono chahiye)
 const REQUIRE_DATES = true;
-const SERVER_VER = 'mfg-v2';   // Code.gs ke VER se match hona chahiye
+const SERVER_VER = 'mfg-v4';   // Code.gs ke VER se match hona chahiye
 // ===============================================================
 
 const KEY = 'auditBinState_honasa_frk_v2';
@@ -84,30 +84,30 @@ function now(){
 const n = v => Number(v) || 0;
 const total = i => n(i.box) * n(i.caseSize) + n(i.loose);
 
-// ---------- date helpers (MFG / Expiry / Shelf life) ----------
-function parseD(s){
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
-  return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+// ---------- month/year helpers (MFG / Expiry = MM/YYYY) ----------
+// Month ko integer index me rakhte hain: year*12 + (month-1)
+function parseMY(s){
+  const m = /^(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim());
+  if (!m) return null;
+  const mo = +m[1], y = +m[2];
+  if (mo < 1 || mo > 12 || y < 2000 || y > 2100) return null;
+  return y * 12 + (mo - 1);
 }
-function fmtD(d){
-  const p = x => String(x).padStart(2,'0');
-  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate());
-}
-function addMonths(d, m){
-  const last = new Date(d.getFullYear(), d.getMonth() + m + 1, 0).getDate();
-  return new Date(d.getFullYear(), d.getMonth() + m, Math.min(d.getDate(), last));
-}
-// Expiry - MFG in months (24, 36, 23.5 ...)
-function monthsBetween(a, b){
-  if (!a || !b || b <= a) return '';
-  let m = (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth());
-  if (b.getDate() < a.getDate()) m -= 1;
-  const anchor = new Date(a.getFullYear(), a.getMonth()+m, a.getDate());
-  const extra = Math.round((b - anchor) / 86400000);
-  return Math.round((m + extra/30) * 10) / 10;
+function fmtMY(k){ return String(k % 12 + 1).padStart(2,'0') + '/' + Math.floor(k / 12); }
+// Expiry - MFG in months
+function monthsBetween(a, b){ return (a && b && b > a) ? (b - a) : ''; }
+// typing mask: 0325 / 3/2025 / 03/2025 -> 03/2025
+function maskMY(el){
+  let v = el.value;
+  if (/^\d\//.test(v)) v = '0' + v;
+  let d = v.replace(/\D/g, '').slice(0, 6);
+  if (d.length === 1 && d > '1') d = '0' + d;
+  if (d.length >= 3) d = d.slice(0, 2) + '/' + d.slice(2);
+  el.value = d;
+  return d;
 }
 function slInfo(i){
-  const a = parseD(i.mfg), b = parseD(i.exp);
+  const a = parseMY(i.mfg), b = parseMY(i.exp);
   if (!a || !b) return { txt:'Shelf life: —', bad:false };
   if (b <= a) return { txt:'⚠ Expiry MFG se pehle/barabar hai', bad:true };
   return { txt:'Shelf life: <b>' + monthsBetween(a, b) + ' months</b>', bad:false };
@@ -132,13 +132,18 @@ window.addEventListener('beforeunload', ev => { if (S.stage === 'bin' && S.items
 // Server ka code naya hai ya purana — POST se ping (wahi route jo save ke liye chalta hai)
 // Purana Code.gs 'Unknown action' bhejta hai bina version ke -> save block hota hai
 async function serverOk(){
-  const r = await fetch(SCRIPT_URL, {
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({ action:'ping' })
-  });
-  const j = await r.json();
-  return !!j && j.ver === SERVER_VER;
+  // 1) naya Code.gs: POST ping -> ver
+  try {
+    const r = await fetch(SCRIPT_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({ action:'ping' }) });
+    const j = await r.json();
+    if (j && j.ver === SERVER_VER) return true;
+  } catch (e) { throw e; }   // net issue — save attempt nahi
+  // 2) thoda purana mfg-v2 Code.gs (ping nahi, par GET me ver hai)
+  try {
+    const r = await fetch(SCRIPT_URL, { cache:'no-store' });
+    const j = await r.json();
+    return !!j && j.ver === SERVER_VER;
+  } catch (e) { return false; }
 }
 function colLetter(n){ let s=''; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26);} return s; }
 
@@ -197,9 +202,9 @@ function itemHtml(i, idx){
       <div><label>Loose QTY</label><input type="number" inputmode="numeric" value="${i.loose}" oninput="upd(${idx},'loose',this.value)"></div>
     </div>
     <div class="fields f3">
-      <div><label>MFG Date</label><input id="mf${idx}" type="date" value="${esc(i.mfg || '')}" onchange="updDate(${idx},'mfg',this.value)"></div>
-      <div><label>Expiry (months)</label><input id="mo${idx}" type="number" inputmode="decimal" min="0" step="any" placeholder="24 / 36" value="${esc(i.months || '')}" oninput="updDate(${idx},'months',this.value)"></div>
-      <div><label>Expiry Date</label><input id="ex${idx}" type="date" value="${esc(i.exp || '')}" onchange="updDate(${idx},'exp',this.value)"></div>
+      <div><label>MFG (MM/YYYY)</label><input id="mf${idx}" type="text" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="MM/YYYY" value="${esc(i.mfg || '')}" oninput="updDate(${idx},'mfg',this.value,this)"></div>
+      <div><label>Expiry (months)</label><input id="mo${idx}" type="number" inputmode="numeric" min="0" step="1" placeholder="24 / 36" value="${esc(i.months || '')}" oninput="updDate(${idx},'months',this.value)"></div>
+      <div><label>Expiry (MM/YYYY)</label><input id="ex${idx}" type="text" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="MM/YYYY" value="${esc(i.exp || '')}" oninput="updDate(${idx},'exp',this.value,this)"></div>
     </div>
     <div class="sl${s.bad ? ' bad' : ''}" id="sl${idx}">${s.txt}</div>
     <div class="tot"><button class="sec more" onclick="scanMore()">➕ Scan more EAN</button><span>Total: <b id="tt${idx}">${total(i)}</b></span></div></div>`;
@@ -240,24 +245,22 @@ function upd(idx, f, v){
 // MFG / months / Expiry — auto calculation:
 //  MFG + months  -> Expiry auto
 //  MFG + Expiry  -> months (shelf life) auto
-function updDate(idx, f, v){
+function updDate(idx, f, v, el){
   const it = S.items[idx];
+  if (el && (f === 'mfg' || f === 'exp')) v = maskMY(el);
   it[f] = v;
-  const mfgEl = document.getElementById('mf' + idx), moEl = document.getElementById('mo' + idx), exEl = document.getElementById('ex' + idx);
-  const mfg = parseD(it.mfg);
+  const moEl = document.getElementById('mo' + idx), exEl = document.getElementById('ex' + idx);
+  const mfg = parseMY(it.mfg);
 
   if (f === 'exp') {
-    const b = parseD(it.exp);
-    if (mfg && b && b > mfg) { it.months = String(monthsBetween(mfg, b)); if (moEl) moEl.value = it.months; }
+    const b = parseMY(it.exp);
+    if (mfg && b && b > mfg) { it.months = String(b - mfg); if (moEl) moEl.value = it.months; }
   } else if (mfg && n(it.months) > 0) {
     // 'mfg' ya 'months' badla — months bhara hai to expiry nikalo
-    const whole = Math.floor(n(it.months)), frac = n(it.months) - whole;
-    let e = addMonths(mfg, whole);
-    if (frac > 0) e = new Date(e.getFullYear(), e.getMonth(), e.getDate() + Math.round(frac * 30));
-    it.exp = fmtD(e); if (exEl) exEl.value = it.exp;
-  } else if (f === 'mfg' && mfg && parseD(it.exp)) {
-    const b = parseD(it.exp);
-    if (b > mfg) { it.months = String(monthsBetween(mfg, b)); if (moEl) moEl.value = it.months; }
+    it.exp = fmtMY(mfg + Math.round(n(it.months))); if (exEl) exEl.value = it.exp;
+  } else if (f === 'mfg' && mfg && parseMY(it.exp)) {
+    const b = parseMY(it.exp);
+    if (b > mfg) { it.months = String(b - mfg); if (moEl) moEl.value = it.months; }
   }
   persist(); setSl(idx);
 }
@@ -282,10 +285,10 @@ async function closeBin(){
     if (n(i.mrp) <= 0) { err = `EAN ${i.ean}: MRP bharo.`; return render(); }
     if (n(i.box) > 0 && n(i.caseSize) <= 0) { err = `EAN ${i.ean}: Box count hai to Case Size bharo.`; return render(); }
     if (total(i) <= 0) { err = `EAN ${i.ean}: Qty 0 hai — hatao ya qty bharo.`; return render(); }
-    const a = parseD(i.mfg), b = parseD(i.exp);
-    if (REQUIRE_DATES && (!a || !b)) { err = `EAN ${i.ean}: MFG Date aur Expiry (months ya date) bharo.`; return render(); }
-    if (!REQUIRE_DATES && (!!a !== !!b)) { err = `EAN ${i.ean}: MFG aur Expiry dono bharo (ya dono khali chhodo).`; return render(); }
-    if (a && b && b <= a) { err = `EAN ${i.ean}: Expiry date MFG se baad ki honi chahiye.`; return render(); }
+    const a = parseMY(i.mfg), b = parseMY(i.exp);
+    if (REQUIRE_DATES && (!a || !b)) { err = `EAN ${i.ean}: MFG aur Expiry MM/YYYY format me bharo (ya months daalo).`; return render(); }
+    if (!REQUIRE_DATES && (!!a !== !!b)) { err = `EAN ${i.ean}: MFG aur Expiry dono MM/YYYY me bharo (ya dono khali chhodo).`; return render(); }
+    if (a && b && b <= a) { err = `EAN ${i.ean}: Expiry MFG se baad ki honi chahiye.`; return render(); }
   }
   const qty = S.items.reduce((s,i)=>s+total(i),0);
   if (!confirm(`Bin ${S.shelf} close karein?\n${S.items.length} EAN, ${qty} units`)) return;
