@@ -62,15 +62,12 @@ const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbziwBWUGBTlajORuGSqy
 const REQUIRE_DATES = true;
 // ===============================================================
 
-const KEY = 'auditBinState_honasa_frk_v1';
-const CKEY = 'auditClients_honasa_frk_v1';
-let S = load() || { auditor:'', client:'', stage:'login', shelf:'', items:[], binId:'', saved:null };
+const KEY = 'auditBinState_honasa_frk_v2';
+let S = load() || { auditor:'', stage:'login', shelf:'', items:[], binId:'', saved:null };
 let busy = false, err = '';
-let CLIENTS = loadClientsCache(), clientsLoading = false, clientsErr = '', clientQ = '';
 
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
 function persist(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
-function loadClientsCache(){ try{ return JSON.parse(localStorage.getItem(CKEY)) || []; }catch(e){ return []; } }
 function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function uid(){ return 'B' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 function now(){
@@ -115,49 +112,6 @@ function setSl(idx){
   el.innerHTML = s.txt; el.className = 'sl' + (s.bad ? ' bad' : '');
 }
 
-// ---------- clients ----------
-async function loadClients(){
-  if (clientsLoading) return;
-  clientsLoading = true; clientsErr = '';
-  if (S.stage === 'client') renderClientList();
-  try {
-    const res = await fetch(SCRIPT_URL + '?action=clients');
-    const j = await res.json();
-    if (!j.ok) throw new Error(j.error || 'Client list nahi mili');
-    CLIENTS = j.clients || [];
-    try{ localStorage.setItem(CKEY, JSON.stringify(CLIENTS)); }catch(e){}
-  } catch (ex) {
-    clientsErr = 'Client list load nahi hui (' + ex.message + ').' + (CLIENTS.length ? ' Purani saved list dikh rahi hai.' : '');
-  }
-  clientsLoading = false;
-  if (S.stage === 'client') renderClientList();
-}
-
-function filteredClients(){
-  const q = clientQ.trim().toLowerCase();
-  return CLIENTS.map((c, i) => ({ c, i })).filter(x => !q || x.c.toLowerCase().includes(q));
-}
-function renderClientList(){
-  const box = document.getElementById('clist'); if (!box) return;
-  let h = '';
-  if (clientsLoading && !CLIENTS.length) h = '<div class="sum">Client list load ho rahi hai…</div>';
-  else {
-    if (clientsErr) h += `<div class="msg er">${esc(clientsErr)} <a href="#" onclick="loadClients();return false">Retry</a></div>`;
-    const f = filteredClients();
-    if (!f.length) h += '<div class="sum">Koi client nahi mila.</div>';
-    h += f.map(x => `<button onclick="pickClient(${x.i})">${esc(x.c)}</button>`).join('');
-  }
-  box.innerHTML = h;
-}
-function pickClient(i){
-  if (!CLIENTS[i]) return;
-  S.client = CLIENTS[i]; S.stage = S.shelf ? 'bin' : 'loc'; err = ''; clientQ = ''; persist(); render();
-}
-function changeClient(){
-  if (S.items.length && !confirm('Current bin ka unsaved data delete ho jayega. Client badlein?')) return;
-  S.client = ''; S.shelf = ''; S.items = []; S.binId = ''; S.stage = 'client'; err = ''; persist(); render();
-}
-
 function render(focusId){
   document.getElementById('who').textContent = S.auditor ? '👤 ' + S.auditor : '';
   const a = document.getElementById('app');
@@ -170,20 +124,8 @@ function render(focusId){
     focus('nm'); return;
   }
 
-  if (S.stage === 'client') {
-    a.innerHTML = e + `<div class="card"><label>Select Client</label>
-      <input id="cs" placeholder="Client search karo" autocomplete="off" value="${esc(clientQ)}" oninput="clientQ=this.value;renderClientList()">
-      <div class="clist" id="clist"></div>
-      <div class="row" style="margin-top:12px"><button class="sec" onclick="logout()">Logout</button></div></div>`;
-    renderClientList();
-    if (!CLIENTS.length || !clientsErr) loadClients();
-    return;
-  }
-
   if (S.stage === 'loc') {
-    a.innerHTML = e + `<div class="card"><div class="cinfo"><div><label>Client</label><b>${esc(S.client)}</b></div>
-        <button class="sec more" onclick="changeClient()">Change</button></div></div>
-      <div class="card"><label>Scan Location / Shelf</label>
+    a.innerHTML = e + `<div class="card"><label>Scan Location / Shelf</label>
       <input id="loc" placeholder="Location barcode scan karo" autocomplete="off">
       <div class="row" style="margin-top:12px"><button class="sec" onclick="logout()">Logout</button></div></div>`;
     focus('loc'); return;
@@ -192,7 +134,7 @@ function render(focusId){
   if (S.stage === 'done') {
     a.innerHTML = `<div class="card done"><div class="big">✅</div>
       <h2 style="margin:8px 0">Bin Closed & Saved</h2>
-      <div class="sum">${esc(S.saved.client)} · ${esc(S.saved.shelf)} — ${S.saved.count} EAN, ${S.saved.qty} units</div>
+      <div class="sum">${esc(S.saved.shelf)} — ${S.saved.count} EAN, ${S.saved.qty} units</div>
       <div style="margin-top:18px"><button onclick="startNew()" style="width:100%">➕ Start New Bin</button></div></div>`;
     return;
   }
@@ -200,7 +142,7 @@ function render(focusId){
   // stage === 'bin'
   const qty = S.items.reduce((s,i)=>s+total(i),0);
   a.innerHTML = e + `
-  <div class="card"><div class="shelf"><div><label>Client · Shelf</label><div class="sum" style="margin:0 0 2px">${esc(S.client)}</div><b>${esc(S.shelf)}</b></div>
+  <div class="card"><div class="shelf"><div><label>Shelf</label><b>${esc(S.shelf)}</b></div>
     <div class="sum" style="text-align:right">${S.items.length} EAN<br>${qty} units</div></div></div>
   <div class="card"><label>Scan EAN (har scan = +1 loose)</label>
     <input id="ean" placeholder="EAN scan karo" autocomplete="off" inputmode="numeric">
@@ -237,7 +179,6 @@ document.addEventListener('keydown', ev => {
   if (ev.key !== 'Enter') return;
   const id = ev.target.id, v = ev.target.value.trim();
   if (id === 'nm') login();
-  else if (id === 'cs') { const f = filteredClients(); if (f.length === 1) pickClient(f[0].i); }
   else if (id === 'loc' && v) { S.shelf = v.toUpperCase(); S.stage = 'bin'; S.binId = uid(); S.items = []; err=''; persist(); render('ean'); }
   else if (id === 'ean' && v) scanEan(v);
 });
@@ -245,9 +186,9 @@ document.addEventListener('keydown', ev => {
 function login(){
   const v = document.getElementById('nm').value.trim();
   if (!v) return;
-  S.auditor = v; S.stage = !S.client ? 'client' : (S.shelf ? 'bin' : 'loc'); persist(); render();
+  S.auditor = v; S.stage = S.shelf ? 'bin' : 'loc'; persist(); render();
 }
-function logout(){ S = { auditor:'', client:'', stage:'login', shelf:'', items:[], binId:'', saved:null }; persist(); render(); }
+function logout(){ S = { auditor:'', stage:'login', shelf:'', items:[], binId:'', saved:null }; persist(); render(); }
 
 function scanEan(code){
   err = '';
@@ -314,17 +255,17 @@ async function closeBin(){
     if (a && b && b <= a) { err = `EAN ${i.ean}: Expiry date MFG se baad ki honi chahiye.`; return render(); }
   }
   const qty = S.items.reduce((s,i)=>s+total(i),0);
-  if (!confirm(`Bin ${S.shelf} close karein?\nClient: ${S.client}\n${S.items.length} EAN, ${qty} units`)) return;
+  if (!confirm(`Bin ${S.shelf} close karein?\n${S.items.length} EAN, ${qty} units`)) return;
   busy = true; render();
   try {
     const res = await fetch(SCRIPT_URL, {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},   // no CORS preflight
-      body: JSON.stringify({ action:'saveBin', binId:S.binId, auditor:S.auditor, client:S.client, shelf:S.shelf, items:S.items })
+      body: JSON.stringify({ action:'saveBin', binId:S.binId, auditor:S.auditor, shelf:S.shelf, items:S.items })
     });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || 'Save failed');
-    S.saved = { client:S.client, shelf:S.shelf, count:S.items.length, qty };
+    S.saved = { shelf:S.shelf, count:S.items.length, qty };
     S.stage = 'done'; S.items = []; S.shelf = ''; S.binId = '';
   } catch (ex) {
     err = 'Save nahi hua (' + ex.message + '). Dobara Close Bin dabao — duplicate nahi banega.';
@@ -333,7 +274,7 @@ async function closeBin(){
 }
 
 if (S.stage === 'bin' && !S.shelf) S.stage = 'loc';
-if ((S.stage === 'loc' || S.stage === 'bin') && !S.client) S.stage = 'client';
+if (S.stage === 'client') S.stage = 'loc';
 render();
 </script>
 </body>
