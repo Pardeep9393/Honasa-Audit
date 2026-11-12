@@ -48,11 +48,15 @@
   .clist button:active{background:var(--ac);color:#fff}
   .cinfo{display:flex;justify-content:space-between;align-items:center;gap:10px}
   .cinfo b{font-size:18px}
+  .net{padding:10px 12px;border-radius:8px;font-size:14px;margin-bottom:10px;font-weight:600}
+  .net.off{background:#d93b4f;color:#fff}
+  .net.on{background:#e4f6ec;color:var(--ok)}
   @media(max-width:460px){.fields{grid-template-columns:repeat(2,1fr)}.fields.f3{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div class="top"><h1>📦 Audit Bin Scanner</h1><div class="who" id="who"></div></div>
+<div id="net"></div>
 <div id="app"></div>
 
 <script>
@@ -60,6 +64,7 @@
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbziwBWUGBTlajORuGSqyVouJaKH5cYzzqZn_ldsWTXC_Q-m8eyEwoEcIiv4cxNQFymg3A/exec';
 // MFG + Expiry dono compulsory? (true = bharna zaroori, false = optional but ek bhara to dono chahiye)
 const REQUIRE_DATES = true;
+const SERVER_VER = 'mfg-v2';   // Code.gs ke VER se match hona chahiye
 // ===============================================================
 
 const KEY = 'auditBinState_honasa_frk_v2';
@@ -112,7 +117,28 @@ function setSl(idx){
   el.innerHTML = s.txt; el.className = 'sl' + (s.bad ? ' bad' : '');
 }
 
+// ---------- internet / device safety ----------
+function netUi(msgOn){
+  const el = document.getElementById('net'); if (!el) return;
+  if (!navigator.onLine) el.innerHTML = '<div class="net off">📵 Internet band hai — scan data is device me safe hai. Scan chalta rahega; Close Bin net aane par karna.</div>';
+  else if (msgOn) { el.innerHTML = '<div class="net on">✅ Internet wapas aa gaya.</div>'; setTimeout(()=>{ if (navigator.onLine) el.innerHTML=''; }, 3000); }
+  else el.innerHTML = '';
+}
+window.addEventListener('offline', () => { netUi(); alert('⚠️ Internet band ho gaya!\n\nBin auto-close nahi hoga. Aapka data is device me safe hai — scan jari rakho, net aane par Close Bin dabao.'); });
+window.addEventListener('online', () => netUi(true));
+window.addEventListener('beforeunload', ev => { if (S.stage === 'bin' && S.items.length) { ev.preventDefault(); ev.returnValue = ''; } });
+
+// Server ka code naya hai ya purana (purana = MFG/Expiry sheet me save nahi hoga)
+async function serverOk(){
+  try {
+    const r = await fetch(SCRIPT_URL, { cache:'no-store' });
+    const j = await r.json();
+    return j && j.ver === SERVER_VER;
+  } catch (e) { return true; }   // net/CORS issue — block nahi karte, save attempt hoga
+}
+
 function render(focusId){
+  netUi();
   document.getElementById('who').textContent = S.auditor ? '👤 ' + S.auditor : '';
   const a = document.getElementById('app');
   const e = err ? `<div class="msg er">${esc(err)}</div>` : '';
@@ -244,6 +270,7 @@ function startNew(confirmNeeded){
 async function closeBin(){
   if (busy) return;
   err = '';
+  if (!navigator.onLine) { err = 'Internet nahi hai — bin open hai aur data safe hai. Net aane par Close Bin dabao.'; return render(); }
   if (!S.items.length) { err = 'Koi EAN scan nahi hua.'; return render(); }
   for (const i of S.items) {
     if (n(i.mrp) <= 0) { err = `EAN ${i.ean}: MRP bharo.`; return render(); }
@@ -257,9 +284,11 @@ async function closeBin(){
   const qty = S.items.reduce((s,i)=>s+total(i),0);
   if (!confirm(`Bin ${S.shelf} close karein?\n${S.items.length} EAN, ${qty} units`)) return;
   busy = true; render();
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 30000);
   try {
+    if (!(await serverOk())) throw new Error('Server ka Code.gs purana hai — Apps Script me New version deploy karo (bin open hai, data safe hai)');
     const res = await fetch(SCRIPT_URL, {
-      method:'POST',
+      method:'POST', signal: ctl.signal,
       headers:{'Content-Type':'text/plain;charset=utf-8'},   // no CORS preflight
       body: JSON.stringify({ action:'saveBin', binId:S.binId, auditor:S.auditor, shelf:S.shelf, items:S.items })
     });
@@ -270,12 +299,15 @@ async function closeBin(){
   } catch (ex) {
     err = 'Save nahi hua (' + ex.message + '). Dobara Close Bin dabao — duplicate nahi banega.';
   }
+  clearTimeout(tm);
   busy = false; persist(); render();
 }
 
 if (S.stage === 'bin' && !S.shelf) S.stage = 'loc';
 if (S.stage === 'client') S.stage = 'loc';
+if (S.stage === 'bin' && S.items.length) err = '';
 render();
+if (S.stage === 'bin' && S.items.length) { const el = document.getElementById('net'); if (el && navigator.onLine) { el.innerHTML = '<div class="net on">↩️ Pichla bin wahin se resume ho gaya (' + S.items.length + ' EAN).</div>'; setTimeout(()=>{ if (navigator.onLine) el.innerHTML=''; }, 4000); } }
 </script>
 </body>
 </html>
