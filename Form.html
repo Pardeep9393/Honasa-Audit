@@ -58,10 +58,11 @@
 <div class="top"><h1>📦 Audit Bin Scanner</h1><div class="who" id="who"></div></div>
 <div id="net"></div>
 <div id="app"></div>
+<div class="sum" style="text-align:center;margin-top:16px">Form v2.2 · server mfg-v2</div>
 
 <script>
 // ====== CONFIG: Apps Script Web App URL yahan paste karo ======
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbziwBWUGBTlajORuGSqyVouJaKH5cYzzqZn_ldsWTXC_Q-m8eyEwoEcIiv4cxNQFymg3A/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxpv5Yefd7hHOLroV3Z0ddJAb-Bur1seEm0U2lNA7OTB8emBHjLjOLtc9EkaRDJ86IoFw/exec';
 // MFG + Expiry dono compulsory? (true = bharna zaroori, false = optional but ek bhara to dono chahiye)
 const REQUIRE_DATES = true;
 const SERVER_VER = 'mfg-v2';   // Code.gs ke VER se match hona chahiye
@@ -128,14 +129,18 @@ window.addEventListener('offline', () => { netUi(); alert('⚠️ Internet band 
 window.addEventListener('online', () => netUi(true));
 window.addEventListener('beforeunload', ev => { if (S.stage === 'bin' && S.items.length) { ev.preventDefault(); ev.returnValue = ''; } });
 
-// Server ka code naya hai ya purana (purana = MFG/Expiry sheet me save nahi hoga)
+// Server ka code naya hai ya purana — POST se ping (wahi route jo save ke liye chalta hai)
+// Purana Code.gs 'Unknown action' bhejta hai bina version ke -> save block hota hai
 async function serverOk(){
-  try {
-    const r = await fetch(SCRIPT_URL, { cache:'no-store' });
-    const j = await r.json();
-    return j && j.ver === SERVER_VER;
-  } catch (e) { return true; }   // net/CORS issue — block nahi karte, save attempt hoga
+  const r = await fetch(SCRIPT_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action:'ping' })
+  });
+  const j = await r.json();
+  return !!j && j.ver === SERVER_VER;
 }
+function colLetter(n){ let s=''; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26);} return s; }
 
 function render(focusId){
   netUi();
@@ -161,6 +166,7 @@ function render(focusId){
     a.innerHTML = `<div class="card done"><div class="big">✅</div>
       <h2 style="margin:8px 0">Bin Closed & Saved</h2>
       <div class="sum">${esc(S.saved.shelf)} — ${S.saved.count} EAN, ${S.saved.qty} units</div>
+      ${S.saved.cols ? `<div class="sum">MFG / Expiry / Shelf Life → sheet columns ${esc(S.saved.cols)}</div>` : ''}
       <div style="margin-top:18px"><button onclick="startNew()" style="width:100%">➕ Start New Bin</button></div></div>`;
     return;
   }
@@ -286,7 +292,7 @@ async function closeBin(){
   busy = true; render();
   const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 30000);
   try {
-    if (!(await serverOk())) throw new Error('Server ka Code.gs purana hai — Apps Script me New version deploy karo (bin open hai, data safe hai)');
+    if (!(await serverOk())) throw new Error('Server pe PURANA Code.gs chal raha hai — MFG/Expiry save nahi hoga. Apps Script me naya Code.gs paste karke Deploy > Manage deployments > Edit > New version karo, aur Form ka SCRIPT_URL wahi deployment ho. Bin open hai, data safe hai');
     const res = await fetch(SCRIPT_URL, {
       method:'POST', signal: ctl.signal,
       headers:{'Content-Type':'text/plain;charset=utf-8'},   // no CORS preflight
@@ -294,7 +300,7 @@ async function closeBin(){
     });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || 'Save failed');
-    S.saved = { shelf:S.shelf, count:S.items.length, qty };
+    S.saved = { shelf:S.shelf, count:S.items.length, qty, cols:(j.cols || []).map(colLetter).join(', ') };
     S.stage = 'done'; S.items = []; S.shelf = ''; S.binId = '';
   } catch (ex) {
     err = 'Save nahi hua (' + ex.message + '). Dobara Close Bin dabao — duplicate nahi banega.';
