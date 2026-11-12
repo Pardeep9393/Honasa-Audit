@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Bin Scanner — Honasa FRK</title>
+<style>
+  :root{--bg:#f3f5f9;--card:#fff;--bd:#d9dfea;--tx:#17202e;--mu:#6b778c;--ac:#1a73e8;--ok:#1e9e5a;--er:#d93b4f}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:14px;max-width:760px;margin:0 auto}
+  h1{font-size:18px;margin:0}
+  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .who{font-size:13px;color:var(--mu)}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:12px}
+  label{font-size:12px;color:var(--mu);display:block;margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  input{width:100%;font-size:18px;padding:12px;border:2px solid var(--bd);border-radius:10px;outline:none;background:#fff}
+  input:focus{border-color:var(--ac)}
+  button{font-size:15px;font-weight:600;border:none;border-radius:10px;padding:12px 16px;cursor:pointer;background:var(--ac);color:#fff}
+  button.sec{background:#e8ecf4;color:var(--tx)}
+  button.ok{background:var(--ok)}
+  button.dg{background:#fde8eb;color:var(--er)}
+  button:disabled{opacity:.5;cursor:wait}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row>*{flex:1}
+  .shelf{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .shelf b{font-size:22px;word-break:break-all}
+  .item{border:1px solid var(--bd);border-radius:10px;padding:10px;margin-top:10px}
+  .item.flash{border-color:var(--ok);background:#effaf4}
+  .ean{font-weight:700;font-size:15px;display:flex;justify-content:space-between;gap:8px}
+  .fields{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+  .fields.f3{grid-template-columns:repeat(3,1fr)}
+  .fields input{font-size:16px;padding:8px}
+  .fields label{font-size:10px}
+  .sl{margin-top:6px;font-size:13px;color:var(--mu)}
+  .sl.bad{color:var(--er);font-weight:600}
+  .sl b{color:var(--tx)}
+  .tot{margin-top:8px;font-size:13px;color:var(--mu);display:flex;align-items:center;gap:12px}
+  .more{padding:7px 12px;font-size:13px}
+  .x{background:none;color:var(--er);padding:0 6px;font-size:18px}
+  .msg{padding:10px 12px;border-radius:8px;font-size:14px;margin-bottom:10px}
+  .msg.er{background:#fde8eb;color:var(--er)}
+  .msg.ok{background:#e4f6ec;color:var(--ok)}
+  .done{text-align:center;padding:30px 16px}
+  .done .big{font-size:42px}
+  .sum{font-size:13px;color:var(--mu);margin-top:8px}
+  .clist{margin-top:12px;max-height:55vh;overflow:auto;display:flex;flex-direction:column;gap:8px}
+  .clist button{background:#e8ecf4;color:var(--tx);text-align:left;font-size:16px}
+  .clist button:active{background:var(--ac);color:#fff}
+  .cinfo{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .cinfo b{font-size:18px}
+  @media(max-width:460px){.fields{grid-template-columns:repeat(2,1fr)}.fields.f3{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="top"><h1>📦 Audit Bin Scanner</h1><div class="who" id="who"></div></div>
+<div id="app"></div>
+
+<script>
+// ====== CONFIG: Apps Script Web App URL yahan paste karo ======
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxpv5Yefd7hHOLroV3Z0ddJAb-Bur1seEm0U2lNA7OTB8emBHjLjOLtc9EkaRDJ86IoFw/exec';
+// MFG + Expiry dono compulsory? (true = bharna zaroori, false = optional but ek bhara to dono chahiye)
+const REQUIRE_DATES = true;
+// ===============================================================
+
+const KEY = 'auditBinState_honasa_frk_v1';
+const CKEY = 'auditClients_honasa_frk_v1';
+let S = load() || { auditor:'', client:'', stage:'login', shelf:'', items:[], binId:'', saved:null };
+let busy = false, err = '';
+let CLIENTS = loadClientsCache(), clientsLoading = false, clientsErr = '', clientQ = '';
+
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
+function persist(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+function loadClientsCache(){ try{ return JSON.parse(localStorage.getItem(CKEY)) || []; }catch(e){ return []; } }
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function uid(){ return 'B' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+function now(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  return `${p(d.getDate())}-${m}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+const n = v => Number(v) || 0;
+const total = i => n(i.box) * n(i.caseSize) + n(i.loose);
+
+// ---------- date helpers (MFG / Expiry / Shelf life) ----------
+function parseD(s){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+  return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+}
+function fmtD(d){
+  const p = x => String(x).padStart(2,'0');
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate());
+}
+function addMonths(d, m){
+  const last = new Date(d.getFullYear(), d.getMonth() + m + 1, 0).getDate();
+  return new Date(d.getFullYear(), d.getMonth() + m, Math.min(d.getDate(), last));
+}
+// Expiry - MFG in months (24, 36, 23.5 ...)
+function monthsBetween(a, b){
+  if (!a || !b || b <= a) return '';
+  let m = (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth());
+  if (b.getDate() < a.getDate()) m -= 1;
+  const anchor = new Date(a.getFullYear(), a.getMonth()+m, a.getDate());
+  const extra = Math.round((b - anchor) / 86400000);
+  return Math.round((m + extra/30) * 10) / 10;
+}
+function slInfo(i){
+  const a = parseD(i.mfg), b = parseD(i.exp);
+  if (!a || !b) return { txt:'Shelf life: —', bad:false };
+  if (b <= a) return { txt:'⚠ Expiry MFG se pehle/barabar hai', bad:true };
+  return { txt:'Shelf life: <b>' + monthsBetween(a, b) + ' months</b>', bad:false };
+}
+function setSl(idx){
+  const el = document.getElementById('sl' + idx); if (!el) return;
+  const s = slInfo(S.items[idx]);
+  el.innerHTML = s.txt; el.className = 'sl' + (s.bad ? ' bad' : '');
+}
+
+// ---------- clients ----------
+async function loadClients(){
+  if (clientsLoading) return;
+  clientsLoading = true; clientsErr = '';
+  if (S.stage === 'client') renderClientList();
+  try {
+    const res = await fetch(SCRIPT_URL + '?action=clients');
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'Client list nahi mili');
+    CLIENTS = j.clients || [];
+    try{ localStorage.setItem(CKEY, JSON.stringify(CLIENTS)); }catch(e){}
+  } catch (ex) {
+    clientsErr = 'Client list load nahi hui (' + ex.message + ').' + (CLIENTS.length ? ' Purani saved list dikh rahi hai.' : '');
+  }
+  clientsLoading = false;
+  if (S.stage === 'client') renderClientList();
+}
+
+function filteredClients(){
+  const q = clientQ.trim().toLowerCase();
+  return CLIENTS.map((c, i) => ({ c, i })).filter(x => !q || x.c.toLowerCase().includes(q));
+}
+function renderClientList(){
+  const box = document.getElementById('clist'); if (!box) return;
+  let h = '';
+  if (clientsLoading && !CLIENTS.length) h = '<div class="sum">Client list load ho rahi hai…</div>';
+  else {
+    if (clientsErr) h += `<div class="msg er">${esc(clientsErr)} <a href="#" onclick="loadClients();return false">Retry</a></div>`;
+    const f = filteredClients();
+    if (!f.length) h += '<div class="sum">Koi client nahi mila.</div>';
+    h += f.map(x => `<button onclick="pickClient(${x.i})">${esc(x.c)}</button>`).join('');
+  }
+  box.innerHTML = h;
+}
+function pickClient(i){
+  if (!CLIENTS[i]) return;
+  S.client = CLIENTS[i]; S.stage = S.shelf ? 'bin' : 'loc'; err = ''; clientQ = ''; persist(); render();
+}
+function changeClient(){
+  if (S.items.length && !confirm('Current bin ka unsaved data delete ho jayega. Client badlein?')) return;
+  S.client = ''; S.shelf = ''; S.items = []; S.binId = ''; S.stage = 'client'; err = ''; persist(); render();
+}
+
+function render(focusId){
+  document.getElementById('who').textContent = S.auditor ? '👤 ' + S.auditor : '';
+  const a = document.getElementById('app');
+  const e = err ? `<div class="msg er">${esc(err)}</div>` : '';
+
+  if (S.stage === 'login') {
+    a.innerHTML = `<div class="card"><label>Auditor Name</label>
+      <input id="nm" placeholder="Apna naam likho" autocomplete="off" value="${esc(S.auditor)}">
+      <div style="margin-top:12px"><button onclick="login()" style="width:100%">Login</button></div></div>`;
+    focus('nm'); return;
+  }
+
+  if (S.stage === 'client') {
+    a.innerHTML = e + `<div class="card"><label>Select Client</label>
+      <input id="cs" placeholder="Client search karo" autocomplete="off" value="${esc(clientQ)}" oninput="clientQ=this.value;renderClientList()">
+      <div class="clist" id="clist"></div>
+      <div class="row" style="margin-top:12px"><button class="sec" onclick="logout()">Logout</button></div></div>`;
+    renderClientList();
+    if (!CLIENTS.length || !clientsErr) loadClients();
+    return;
+  }
+
+  if (S.stage === 'loc') {
+    a.innerHTML = e + `<div class="card"><div class="cinfo"><div><label>Client</label><b>${esc(S.client)}</b></div>
+        <button class="sec more" onclick="changeClient()">Change</button></div></div>
+      <div class="card"><label>Scan Location / Shelf</label>
+      <input id="loc" placeholder="Location barcode scan karo" autocomplete="off">
+      <div class="row" style="margin-top:12px"><button class="sec" onclick="logout()">Logout</button></div></div>`;
+    focus('loc'); return;
+  }
+
+  if (S.stage === 'done') {
+    a.innerHTML = `<div class="card done"><div class="big">✅</div>
+      <h2 style="margin:8px 0">Bin Closed & Saved</h2>
+      <div class="sum">${esc(S.saved.client)} · ${esc(S.saved.shelf)} — ${S.saved.count} EAN, ${S.saved.qty} units</div>
+      <div style="margin-top:18px"><button onclick="startNew()" style="width:100%">➕ Start New Bin</button></div></div>`;
+    return;
+  }
+
+  // stage === 'bin'
+  const qty = S.items.reduce((s,i)=>s+total(i),0);
+  a.innerHTML = e + `
+  <div class="card"><div class="shelf"><div><label>Client · Shelf</label><div class="sum" style="margin:0 0 2px">${esc(S.client)}</div><b>${esc(S.shelf)}</b></div>
+    <div class="sum" style="text-align:right">${S.items.length} EAN<br>${qty} units</div></div></div>
+  <div class="card"><label>Scan EAN (har scan = +1 loose)</label>
+    <input id="ean" placeholder="EAN scan karo" autocomplete="off" inputmode="numeric">
+    <div id="list">${S.items.map(itemHtml).join('')}</div></div>
+  <div class="row">
+    <button class="dg" onclick="startNew(true)">Start New Bin</button>
+    <button class="ok" id="closeBtn" onclick="closeBin()" ${busy?'disabled':''}>${busy?'Saving…':'Close Bin'}</button>
+  </div>`;
+  focus(focusId || 'ean');
+}
+
+function itemHtml(i, idx){
+  const s = slInfo(i);
+  return `<div class="item" id="it${idx}">
+    <div class="ean"><span>${esc(i.ean)}</span><button class="x" onclick="delItem(${idx})">✕</button></div>
+    <div class="fields">
+      <div><label>MRP</label><input type="number" inputmode="decimal" value="${i.mrp}" oninput="upd(${idx},'mrp',this.value)"></div>
+      <div><label>Case Size</label><input type="number" inputmode="numeric" value="${i.caseSize}" oninput="upd(${idx},'caseSize',this.value)"></div>
+      <div><label>Box Count</label><input type="number" inputmode="numeric" value="${i.box}" oninput="upd(${idx},'box',this.value)"></div>
+      <div><label>Loose QTY</label><input type="number" inputmode="numeric" value="${i.loose}" oninput="upd(${idx},'loose',this.value)"></div>
+    </div>
+    <div class="fields f3">
+      <div><label>MFG Date</label><input id="mf${idx}" type="date" value="${esc(i.mfg || '')}" onchange="updDate(${idx},'mfg',this.value)"></div>
+      <div><label>Expiry (months)</label><input id="mo${idx}" type="number" inputmode="decimal" min="0" step="any" placeholder="24 / 36" value="${esc(i.months || '')}" oninput="updDate(${idx},'months',this.value)"></div>
+      <div><label>Expiry Date</label><input id="ex${idx}" type="date" value="${esc(i.exp || '')}" onchange="updDate(${idx},'exp',this.value)"></div>
+    </div>
+    <div class="sl${s.bad ? ' bad' : ''}" id="sl${idx}">${s.txt}</div>
+    <div class="tot"><button class="sec more" onclick="scanMore()">➕ Scan more EAN</button><span>Total: <b id="tt${idx}">${total(i)}</b></span></div></div>`;
+}
+
+function focus(id){ setTimeout(()=>{ const el = document.getElementById(id); if (el) el.focus(); }, 30); }
+
+document.addEventListener('keydown', ev => {
+  if (ev.key !== 'Enter') return;
+  const id = ev.target.id, v = ev.target.value.trim();
+  if (id === 'nm') login();
+  else if (id === 'cs') { const f = filteredClients(); if (f.length === 1) pickClient(f[0].i); }
+  else if (id === 'loc' && v) { S.shelf = v.toUpperCase(); S.stage = 'bin'; S.binId = uid(); S.items = []; err=''; persist(); render('ean'); }
+  else if (id === 'ean' && v) scanEan(v);
+});
+
+function login(){
+  const v = document.getElementById('nm').value.trim();
+  if (!v) return;
+  S.auditor = v; S.stage = !S.client ? 'client' : (S.shelf ? 'bin' : 'loc'); persist(); render();
+}
+function logout(){ S = { auditor:'', client:'', stage:'login', shelf:'', items:[], binId:'', saved:null }; persist(); render(); }
+
+function scanEan(code){
+  err = '';
+  let idx = S.items.findIndex(i => i.ean === code);
+  if (idx > -1) S.items[idx].loose = n(S.items[idx].loose) + 1;
+  else { S.items.push({ ean:code, mrp:'', caseSize:'', box:'', loose:1, mfg:'', exp:'', months:'', time:now() }); idx = S.items.length - 1; }
+  persist(); render('ean');
+  const el = document.getElementById('it' + idx);
+  if (el) { el.classList.add('flash'); el.scrollIntoView({block:'nearest'}); setTimeout(()=>el.classList.remove('flash'), 600); }
+}
+
+function upd(idx, f, v){
+  S.items[idx][f] = v; persist();
+  const t = document.getElementById('tt' + idx); if (t) t.textContent = total(S.items[idx]);
+}
+
+// MFG / months / Expiry — auto calculation:
+//  MFG + months  -> Expiry auto
+//  MFG + Expiry  -> months (shelf life) auto
+function updDate(idx, f, v){
+  const it = S.items[idx];
+  it[f] = v;
+  const mfgEl = document.getElementById('mf' + idx), moEl = document.getElementById('mo' + idx), exEl = document.getElementById('ex' + idx);
+  const mfg = parseD(it.mfg);
+
+  if (f === 'exp') {
+    const b = parseD(it.exp);
+    if (mfg && b && b > mfg) { it.months = String(monthsBetween(mfg, b)); if (moEl) moEl.value = it.months; }
+  } else if (mfg && n(it.months) > 0) {
+    // 'mfg' ya 'months' badla — months bhara hai to expiry nikalo
+    const whole = Math.floor(n(it.months)), frac = n(it.months) - whole;
+    let e = addMonths(mfg, whole);
+    if (frac > 0) e = new Date(e.getFullYear(), e.getMonth(), e.getDate() + Math.round(frac * 30));
+    it.exp = fmtD(e); if (exEl) exEl.value = it.exp;
+  } else if (f === 'mfg' && mfg && parseD(it.exp)) {
+    const b = parseD(it.exp);
+    if (b > mfg) { it.months = String(monthsBetween(mfg, b)); if (moEl) moEl.value = it.months; }
+  }
+  persist(); setSl(idx);
+}
+
+function scanMore(){
+  const el = document.getElementById('ean');
+  if (el) { el.value = ''; el.scrollIntoView({block:'center'}); el.focus(); }
+}
+function delItem(idx){ if (!confirm('Ye EAN hatana hai?')) return; S.items.splice(idx,1); persist(); render(); }
+
+function startNew(confirmNeeded){
+  if (confirmNeeded && S.items.length && !confirm('Current bin ka unsaved data delete ho jayega. Naya bin start karein?')) return;
+  S.shelf=''; S.items=[]; S.binId=''; S.saved=null; S.stage='loc'; err=''; persist(); render();
+}
+
+async function closeBin(){
+  if (busy) return;
+  err = '';
+  if (!S.items.length) { err = 'Koi EAN scan nahi hua.'; return render(); }
+  for (const i of S.items) {
+    if (n(i.mrp) <= 0) { err = `EAN ${i.ean}: MRP bharo.`; return render(); }
+    if (n(i.box) > 0 && n(i.caseSize) <= 0) { err = `EAN ${i.ean}: Box count hai to Case Size bharo.`; return render(); }
+    if (total(i) <= 0) { err = `EAN ${i.ean}: Qty 0 hai — hatao ya qty bharo.`; return render(); }
+    const a = parseD(i.mfg), b = parseD(i.exp);
+    if (REQUIRE_DATES && (!a || !b)) { err = `EAN ${i.ean}: MFG Date aur Expiry (months ya date) bharo.`; return render(); }
+    if (!REQUIRE_DATES && (!!a !== !!b)) { err = `EAN ${i.ean}: MFG aur Expiry dono bharo (ya dono khali chhodo).`; return render(); }
+    if (a && b && b <= a) { err = `EAN ${i.ean}: Expiry date MFG se baad ki honi chahiye.`; return render(); }
+  }
+  const qty = S.items.reduce((s,i)=>s+total(i),0);
+  if (!confirm(`Bin ${S.shelf} close karein?\nClient: ${S.client}\n${S.items.length} EAN, ${qty} units`)) return;
+  busy = true; render();
+  try {
+    const res = await fetch(SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},   // no CORS preflight
+      body: JSON.stringify({ action:'saveBin', binId:S.binId, auditor:S.auditor, client:S.client, shelf:S.shelf, items:S.items })
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'Save failed');
+    S.saved = { client:S.client, shelf:S.shelf, count:S.items.length, qty };
+    S.stage = 'done'; S.items = []; S.shelf = ''; S.binId = '';
+  } catch (ex) {
+    err = 'Save nahi hua (' + ex.message + '). Dobara Close Bin dabao — duplicate nahi banega.';
+  }
+  busy = false; persist(); render();
+}
+
+if (S.stage === 'bin' && !S.shelf) S.stage = 'loc';
+if ((S.stage === 'loc' || S.stage === 'bin') && !S.client) S.stage = 'client';
+render();
+</script>
+</body>
+</html>
