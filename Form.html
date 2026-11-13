@@ -196,7 +196,6 @@ function itemHtml(i, idx){
   return `<div class="item" id="it${idx}">
     <div class="ean"><span>${esc(i.ean)}</span><button class="x" onclick="delItem(${idx})">✕</button></div>
     <div class="fields">
-      <div><label>MRP</label><input type="number" inputmode="decimal" value="${i.mrp}" oninput="upd(${idx},'mrp',this.value)"></div>
       <div><label>Case Size</label><input type="number" inputmode="numeric" value="${i.caseSize}" oninput="upd(${idx},'caseSize',this.value)"></div>
       <div><label>Box Count</label><input type="number" inputmode="numeric" value="${i.box}" oninput="upd(${idx},'box',this.value)"></div>
       <div><label>Loose QTY</label><input type="number" inputmode="numeric" value="${i.loose}" oninput="upd(${idx},'loose',this.value)"></div>
