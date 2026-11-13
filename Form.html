@@ -196,6 +196,7 @@ function itemHtml(i, idx){
   return `<div class="item" id="it${idx}">
     <div class="ean"><span>${esc(i.ean)}</span><button class="x" onclick="delItem(${idx})">✕</button></div>
     <div class="fields">
+      <div><label>MRP (optional)</label><input type="number" inputmode="decimal" value="${i.mrp}" oninput="upd(${idx},'mrp',this.value)"></div>
       <div><label>Case Size</label><input type="number" inputmode="numeric" value="${i.caseSize}" oninput="upd(${idx},'caseSize',this.value)"></div>
       <div><label>Box Count</label><input type="number" inputmode="numeric" value="${i.box}" oninput="upd(${idx},'box',this.value)"></div>
       <div><label>Loose QTY</label><input type="number" inputmode="numeric" value="${i.loose}" oninput="upd(${idx},'loose',this.value)"></div>
@@ -230,7 +231,7 @@ function scanEan(code){
   err = '';
   let idx = S.items.findIndex(i => i.ean === code);
   if (idx > -1) S.items[idx].loose = n(S.items[idx].loose) + 1;
-  else { S.items.push({ ean:code, mrp:'', caseSize:'', box:'', loose:1, mfg:'', exp:'', months:'', time:now() }); idx = S.items.length - 1; }
+  else { S.items.push({ ean:code, mrp:'0', caseSize:'', box:'', loose:1, mfg:'', exp:'', months:'', time:now() }); idx = S.items.length - 1; }
   persist(); render('ean');
   const el = document.getElementById('it' + idx);
   if (el) { el.classList.add('flash'); el.scrollIntoView({block:'nearest'}); setTimeout(()=>el.classList.remove('flash'), 600); }
@@ -281,7 +282,6 @@ async function closeBin(){
   if (!navigator.onLine) { err = 'Internet nahi hai — bin open hai aur data safe hai. Net aane par Close Bin dabao.'; return render(); }
   if (!S.items.length) { err = 'Koi EAN scan nahi hua.'; return render(); }
   for (const i of S.items) {
-    if (n(i.mrp) <= 0) { err = `EAN ${i.ean}: MRP bharo.`; return render(); }
     if (n(i.box) > 0 && n(i.caseSize) <= 0) { err = `EAN ${i.ean}: Box count hai to Case Size bharo.`; return render(); }
     if (total(i) <= 0) { err = `EAN ${i.ean}: Qty 0 hai — hatao ya qty bharo.`; return render(); }
     const a = parseMY(i.mfg), b = parseMY(i.exp);
